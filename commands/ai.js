@@ -145,7 +145,7 @@ const { data } = await axios.post("https://newapplication-70381.chipp.ai/api/cha
       }
 
       conversationHistory[senderId].push({ role: 'assistant', content: fullResponseText });
-      const formattedResponse = `\n${fullResponseText}\n・──── >ᴗ< ────・`;
+      const formattedResponse = `\n${fullResponseText}\n`;
       const messageChunks = chunkMessage(formattedResponse, 1900);
       for (const chunk of messageChunks) {
         await sendMessage(senderId, { text: chunk }, pageAccessToken);
