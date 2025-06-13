@@ -1,36 +1,82 @@
+const express = require("express");
 const axios = require("axios");
+require("dotenv").config();
 
-module.exports = {
-  name: "ai",
-  description: "Parle avec l'IA basée sur LLaMA 3",
-  usage: "/ai [message]",
-  
-  async execute(message, args) {
-    const userMessage = args.join(" ");
-    const userId = message.author?.id || "123"; // Si tu es dans un bot Discord ou web chat
-    const apiUrl = "https://asios-api.vercel.app/api/llama3-8b";
+const app = express();
+app.use(express.json());
 
-    if (!userMessage) {
-      return message.reply("❌ Tu dois écrire un message. Exemple : `/ai Bonjour, qui es-tu ?`");
-    }
+const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 
-    try {
-      const response = await axios.get(apiUrl, {
-        params: {
-          query: userMessage,
-          userId: userId
-        }
-      });
+// Vérification webhook (Facebook)
+app.get("/webhook", (req, res) => {
+  const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
 
-      const aiResponse = response.data.response;
-      if (!aiResponse) {
-        return message.reply("🤖 L'IA n'a pas répondu.");
-      }
-
-      message.reply("🤖 " + aiResponse);
-    } catch (err) {
-      console.error("Erreur AI:", err.message);
-      message.reply("⚠️ Une erreur est survenue lors de la communication avec l'IA.");
-    }
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("Webhook vérifié");
+    res.status(200).send(challenge);
+  } else {
+    res.sendStatus(403);
   }
-};
+});
+
+// Réception de messages
+app.post("/webhook", async (req, res) => {
+  const body = req.body;
+
+  if (body.object === "page") {
+    for (const entry of body.entry) {
+      for (const event of entry.messaging) {
+        if (event.message && event.message.text) {
+          const senderId = event.sender.id;
+          const userMessage = event.message.text;
+
+          // Appel à l'API IA
+          const aiResponse = await getAIResponse(userMessage, senderId);
+
+          // Réponse à l'utilisateur
+          await sendMessage(senderId, aiResponse);
+        }
+      }
+    }
+
+    res.status(200).send("EVENT_RECEIVED");
+  } else {
+    res.sendStatus(404);
+  }
+});
+
+// Fonction pour appeler l'IA
+async function getAIResponse(query, userId) {
+  try {
+    const res = await axios.get("https://asios-api.vercel.app/api/llama3-8b", {
+      params: { query, userId },
+    });
+    return res.data.response || "Je n'ai pas compris.";
+  } catch (e) {
+    console.error("Erreur IA:", e.message);
+    return "Désolé, une erreur est survenue.";
+  }
+}
+
+// Fonction pour envoyer un message avec Send API Facebook
+async function sendMessage(recipientId, messageText) {
+  const payload = {
+    recipient: { id: recipientId },
+    message: { text: messageText },
+  };
+
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+      payload
+    );
+  } catch (err) {
+    console.error("Erreur d'envoi:", err.response?.data || err.message);
+  }
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("🚀 Bot lancé sur le port", PORT));
