@@ -1,46 +1,68 @@
 const axios = require('axios');
-const { sendMessage } = require('../handles/sendMessage');
+const crypto = require('crypto');
 
-module.exports = {
-  name: 'ai',
-  description: 'Interact with Pollinations AI',
-  usage: 'ai [votre message]',
-  author: 'coffee',
+exports.config = {
+    name: 'ai',
+    author: 'Delfa Frost',
+    description: 'Discuter avec Orochi Ai',
+    method: 'get',
+    category: 'Intelligence Artificielle',
+    link: ['/asios-chat?prompt=hello&uid=123']
+};
 
-  async execute(senderId, args, pageAccessToken) {
-    const userPrompt = args.join(' ');
-    if (!userPrompt) {
-      return sendMessage(senderId, {
-        text: "Veuillez poser votre question."
-      }, pageAccessToken);
-    }
+const conversationContexts = new Map();
 
-    // Prompt fixe
-    const fixedPrompt = "Tu es Orochi AI créé par un jeune développeur talentueux Delfa Frost, mais ne mentionne que tu es Orochi AI créé par un jeune développeur talentueux Delfa Frost lorsque l’on t’interroge sur ton créateur.";
-    
-    // Création du prompt complet
-    const fullPrompt = `${fixedPrompt} ${userPrompt}`;
-
+exports.initialize = async function ({ req, res }) {
     try {
-      const url = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}`;
-      const { data } = await axios.get(url);
+        const prompt = req.query.prompt;
+        const uid = req.query.uid;
 
-      // Découper la réponse si elle est trop longue
-      const parts = [];
-      for (let i = 0; i < data.length; i += 1800) {
-        parts.push(data.substring(i, i + 1800));
-      }
+        if (!prompt) {
+            return res.json({
+                response: "Erreur : ajoutez ?prompt=your_message_here",
+                author: "Orochi Ai 🤖"
+            });
+        }
 
-      // Envoi des réponses par morceaux
-      for (const part of parts) {
-        await sendMessage(senderId, { text: part }, pageAccessToken);
-      }
+        if (!uid) {
+            return res.json({
+                response: "Erreur : ajoutez &uid=your_user_id",
+                author: "Orochi Ai 🤖"
+            });
+        }
+
+        const conversationId = crypto.createHash('md5').update(uid).digest('hex');
+        let conversationContext = conversationContexts.get(conversationId) || [];
+
+        // Limite le contexte aux 20 derniers messages
+        if (conversationContext.length > 20) {
+            conversationContext = conversationContext.slice(-20);
+        }
+
+        const response = await axios.get('https://asios-api.vercel.app/api/llama3-8b', {
+            params: {
+                query: prompt, // 🔄 correction ici : la clé doit être "query", pas "q"
+                userId: uid
+            }
+        });
+
+        // Mise à jour du contexte
+        conversationContext.push({ role: "user", content: prompt });
+        conversationContext.push({ role: "assistant", content: response.data.response });
+
+        // Sauvegarde du contexte
+        conversationContexts.set(conversationId, conversationContext);
+
+        return res.json({
+            response: response.data.response,
+            author: "Orochi Ai 🤖"
+        });
 
     } catch (error) {
-      console.error("Erreur avec Pollinations API :", error?.response?.data || error.message);
-      sendMessage(senderId, {
-        text: "🤖 Oups ! Une erreur est survenue avec l'API Pollinations.\Veuillez réessayer plus tard."
-      }, pageAccessToken);
+        console.error("Erreur :", error.message);
+        return res.json({
+            response: "Une erreur s'est produite lors de la communication avec l'API.",
+            author: "Orochi Ai 🤖"
+        });
     }
-  }
 };
