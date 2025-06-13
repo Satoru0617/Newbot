@@ -1,92 +1,42 @@
-const express = require("express");
-const axios = require("axios");
-require("dotenv").config();
+const axios = require('axios');
+const { sendMessage } = require('../handles/sendMessage');
 
-const app = express();
-app.use(express.json());
+module.exports = {
+  name: 'ai',
+  description: 'Interact with llama3-8b API',
+  usage: 'ai [your message]',
+  author: 'coffee',
 
-const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+  async execute(senderId, args, pageAccessToken) {
+    const prompt = args.join(' ');
+    if (!prompt) return sendMessage(senderId, { text: "𝐒𝐚𝐥𝐮𝐭 👋 𝐣𝐞 𝐬𝐮𝐢𝐬 𝐎𝐫𝐨𝐜𝐡𝐢 𝐯𝐨𝐭𝐫𝐞 𝐜𝐡𝐚𝐭𝐛𝐨𝐭,𝐕𝐞𝐮𝐢𝐥𝐥𝐞𝐳 𝐩𝐨𝐬𝐞𝐫 𝐥𝐚 𝐪𝐮𝐞𝐬𝐭𝐢𝐨𝐧 𝐚 𝐯𝐨𝐭𝐫𝐞 𝐜𝐨𝐧𝐯𝐞𝐧𝐚𝐧𝐜𝐞 𝐞𝐭 𝐣𝐞 𝐦'𝐞𝐟𝐟𝐨𝐫𝐜𝐞𝐫𝐚𝐢 𝐝𝐞 𝐯𝐨𝐮𝐬  𝐟𝐨𝐮𝐫𝐧𝐢𝐫 𝐮𝐧𝐞 𝐫𝐞𝐩𝐨𝐧𝐬𝐞 𝐞𝐟𝐟𝐢𝐜𝐚𝐜𝐞 🙂🤓. 𝐕𝐨𝐭𝐫𝐞 𝐬𝐚𝐭𝐢𝐬𝐟𝐚𝐜𝐭𝐢𝐨𝐧 𝐞𝐬𝐭 𝐦𝐚 𝐩𝐫𝐢𝐨𝐫𝐢𝐭é 𝐚𝐛𝐬𝐨𝐥𝐮𝐞 🤖. (𝐄𝐝𝐢𝐭é 𝐩𝐚𝐫 𝐃𝐞𝐥𝐟𝐚 𝐟𝐫𝐨𝐬𝐭)" }, pageAccessToken);
 
-// Route pour vérifier le webhook (Facebook)
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
+    try {
+      const response = await axios.post(
+        'https://asios-api.vercel.app/api/llama3-8b',
+        { prompt },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
 
-  if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook vérifié");
-    res.status(200).send(challenge);
-  } else {
-    res.sendStatus(403);
-  }
-});
+      // Supposons que la réponse est dans response.data.response ou response.data.text
+      const text = response.data.response || response.data.text || "Désolé, je n'ai pas compris la réponse.";
 
-// Réception de messages Facebook
-app.post("/webhook", async (req, res) => {
-  const body = req.body;
-
-  if (body.object === "page") {
-    for (const entry of body.entry) {
-      for (const event of entry.messaging) {
-        if (event.message && event.message.text) {
-          const senderId = event.sender.id;
-          const userMessage = event.message.text;
-
-          const aiResponse = await askOpenAI(userMessage);
-          await sendMessage(senderId, aiResponse);
-        }
+      // Découpage en morceaux de 1800 caractères max
+      const parts = [];
+      for (let i = 0; i < text.length; i += 1800) {
+        parts.push(text.substring(i, i + 1800));
       }
+
+      for (const part of parts) {
+        await sendMessage(senderId, { text: part }, pageAccessToken);
+      }
+
+    } catch (error) {
+      console.error('AI command error:', error.message || error);
+      sendMessage(senderId, { 
+        text: "𝐕𝐞𝐮𝐢𝐥𝐥𝐞𝐳 𝐫é𝐞𝐬𝐬𝐚𝐲𝐞𝐫 𝐩𝐥𝐮𝐬 𝐭𝐚𝐫𝐝 🙂✨,\n\n" +
+              "𝐯𝐨𝐮𝐬 ê𝐭𝐞𝐬 𝐭𝐫è𝐬 𝐧𝐨𝐦𝐛𝐫𝐞𝐮𝐱 𝐞𝐭 𝐦𝐨𝐧 𝐬𝐞𝐫𝐯𝐞𝐮𝐫 𝐞𝐬𝐭 𝐮𝐧 𝐩𝐞𝐮 𝐬𝐮𝐫𝐜𝐡𝐚𝐫𝐠é."
+      }, pageAccessToken);
     }
-
-    res.status(200).send("EVENT_RECEIVED");
-  } else {
-    res.sendStatus(404);
   }
-});
-
-// Fonction OpenAI (GPT-4 ou GPT-3.5 selon ta clé)
-async function askOpenAI(userText) {
-  try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-3.5-turbo", // ou "gpt-4" si disponible
-        messages: [{ role: "user", content: userText }],
-        temperature: 0.7
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-
-    return response.data.choices[0].message.content.trim();
-  } catch (error) {
-    console.error("Erreur OpenAI:", error.response?.data || error.message);
-    return "Désolé, je ne peux pas répondre pour le moment.";
-  }
-}
-
-// Fonction d’envoi de message Facebook
-async function sendMessage(recipientId, text) {
-  try {
-    await axios.post(
-      `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      {
-        recipient: { id: recipientId },
-        message: { text }
-      }
-    );
-  } catch (err) {
-    console.error("Erreur d'envoi à Messenger:", err.response?.data || err.message);
-  }
-}
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("🤖 Bot Facebook avec OpenAI en ligne sur le port", PORT);
-});
+};
