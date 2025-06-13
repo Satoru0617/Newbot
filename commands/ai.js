@@ -6,23 +6,24 @@ const app = express();
 app.use(express.json());
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-// Vérification webhook (Facebook)
+// Route pour vérifier le webhook (Facebook)
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook vérifié");
+    console.log("✅ Webhook vérifié");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// Réception de messages
+// Réception de messages Facebook
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
@@ -33,10 +34,7 @@ app.post("/webhook", async (req, res) => {
           const senderId = event.sender.id;
           const userMessage = event.message.text;
 
-          // Appel à l'API IA
-          const aiResponse = await getAIResponse(userMessage, senderId);
-
-          // Réponse à l'utilisateur
+          const aiResponse = await askOpenAI(userMessage);
           await sendMessage(senderId, aiResponse);
         }
       }
@@ -48,35 +46,47 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Fonction pour appeler l'IA
-async function getAIResponse(query, userId) {
+// Fonction OpenAI (GPT-4 ou GPT-3.5 selon ta clé)
+async function askOpenAI(userText) {
   try {
-    const res = await axios.get("https://asios-api.vercel.app/api/llama3-8b", {
-      params: { query, userId },
-    });
-    return res.data.response || "Je n'ai pas compris.";
-  } catch (e) {
-    console.error("Erreur IA:", e.message);
-    return "Désolé, une erreur est survenue.";
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-3.5-turbo", // ou "gpt-4" si disponible
+        messages: [{ role: "user", content: userText }],
+        temperature: 0.7
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    return response.data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("Erreur OpenAI:", error.response?.data || error.message);
+    return "Désolé, je ne peux pas répondre pour le moment.";
   }
 }
 
-// Fonction pour envoyer un message avec Send API Facebook
-async function sendMessage(recipientId, messageText) {
-  const payload = {
-    recipient: { id: recipientId },
-    message: { text: messageText },
-  };
-
+// Fonction d’envoi de message Facebook
+async function sendMessage(recipientId, text) {
   try {
     await axios.post(
       `https://graph.facebook.com/v18.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-      payload
+      {
+        recipient: { id: recipientId },
+        message: { text }
+      }
     );
   } catch (err) {
-    console.error("Erreur d'envoi:", err.response?.data || err.message);
+    console.error("Erreur d'envoi à Messenger:", err.response?.data || err.message);
   }
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Bot lancé sur le port", PORT));
+app.listen(PORT, () => {
+  console.log("🤖 Bot Facebook avec OpenAI en ligne sur le port", PORT);
+});
