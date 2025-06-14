@@ -129,7 +129,7 @@ module.exports = {
       } catch (geminiErr) {
         console.error("Erreur Gemini:", geminiErr.message);
         await deleteMessage(typingMessageId, pageAccessToken);
-        await sendMessage(senderId, { text: "Oups, 🎃🚬 une erreur s'est produite avec les deux IA." }, pageAccessToken);
+        await sendMessage(senderId, { text: "Alerte 🚨" }, pageAccessToken);
       }
     }
   },
