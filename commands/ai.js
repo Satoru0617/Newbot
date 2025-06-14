@@ -1,54 +1,136 @@
 const axios = require('axios');
+const { sendMessage } = require('../handles/sendMessage');
+
+const getImageUrl = async (event, token) => {
+  const mid = event?.message?.reply_to?.mid || event?.message?.mid;
+  if (!mid) return null;
+
+  try {
+    const { data } = await axios.get(`https://graph.facebook.com/v22.0/${mid}/attachments`, {
+      params: { access_token: token }
+    });
+
+    const imageUrl = data?.data?.[0]?.image_data?.url || data?.data?.[0]?.file_url || null;
+    return imageUrl;
+  } catch (err) {
+    console.error("Image URL fetch error:", err?.response?.data || err.message);
+    return null;
+  }
+};
+
+const conversationHistory = {};
+
+async function sendTypingIndicator(senderId, pageAccessToken) {
+  try {
+    const res = await sendMessage(senderId, { text: "" }, pageAccessToken);
+    return res?.message_id || null;
+  } catch (err) {
+    console.error("Erreur lors de l'envoi de l'indicateur :", err.message);
+    return null;
+  }
+}
+
+async function deleteMessage(messageId, pageAccessToken) {
+  try {
+    if (messageId) {
+      await axios.delete(`https://graph.facebook.com/v19.0/${messageId}`, {
+        params: { access_token: pageAccessToken }
+      });
+    }
+  } catch (err) {
+    console.error("Erreur lors de la suppression du message :", err.message);
+  }
+}
 
 module.exports = {
   name: 'ai',
-  description: 'Ask a question to GPT-4',
-  usage: 'ai <question>',
-  author: 'Deku (rest api)',
+  description: 'Interact with Mocha AI using text queries and image analysis',
+  usage: 'ask a question, or send a reply question to an image.',
+  author: '',
 
-  async execute(senderId, args, pageAccessToken, sendMessage) {
-    // Default to "hi" if no query is provided
-    const prompt = (args.join(' ') || 'hi').trim();
+  async execute(senderId, args, pageAccessToken, event) {
+    let prompt = args.join(' ').trim() || 'Hello';
+    const uid = senderId;
+    const imageUrl = await getImageUrl(event, pageAccessToken);
+    if (imageUrl) {
+      prompt += `\nImage URL: ${imageUrl}`;
+    }
 
-    // Automatically add ", direct answer" to the user's prompt
-    const modifiedPrompt = `${prompt}, direct answer.`;
+    if (!conversationHistory[uid]) {
+      conversationHistory[uid] = [];
+    }
 
-    const header = 'ᝰ.ᐟ | 𝙲𝚑𝚊𝚝𝙶𝙿𝚃\n・───────────・\n';
-    const footer = '\n・──── >ᴗ< ─────・';
+    conversationHistory[uid].push({ role: 'user', content: prompt });
+
+    const chunkMessage = (message, maxLength) => {
+      const chunks = [];
+      for (let i = 0; i < message.length; i += maxLength) {
+        chunks.push(message.slice(i, i + maxLength));
+      }
+      return chunks;
+    };
+
+    const typingMessageId = await sendTypingIndicator(senderId, pageAccessToken);
 
     try {
-      // Use senderId for uid
-      const apiUrl = `https://ajiro-rest-api.gleeze.com/api/gpt4o1?prompt=${encodeURIComponent(modifiedPrompt)}&uid=${senderId}`;
-      const response = await axios.get(apiUrl);
-      const { message, img_urls } = response.data;
-
-      console.log('Response data:', response.data);
-
-      // If there are image URLs, send them as image attachments
-      if (img_urls && img_urls.length > 0) {
-        console.log('Image URLs:', img_urls);
-        for (const imgUrl of img_urls) {
-          const attachment = {
-            type: 'image',
-            payload: { url: imgUrl }
-          };
-          await sendMessage(senderId, { attachment }, pageAccessToken);
+      // Essai avec Zetsu
+      const zetsuRes = await axios.get('https://api.zetsu.xyz/api/copilot', {
+        params: {
+          prompt: encodeURIComponent(prompt),
+          apikey: 'dfc3db8eeb9991ebed1880d4b153625f'
         }
-      } else {
-        console.log('No image URLs found.');
-        // Clean up the message by removing any unwanted markdown-style image links
-        const cleanMessage = message.replace(/!.*?.*?/, '').trim();
+      });
 
-        // Add header and footer to the cleaned-up message
-        const formattedMessage = `${header}${cleanMessage}${footer}`;
+      await deleteMessage(typingMessageId, pageAccessToken);
 
-        // Send the message directly without splitting
-        await sendMessage(senderId, { text: formattedMessage }, pageAccessToken);
+      const reply = zetsuRes.data?.result || zetsuRes.data?.response;
+      if (!reply) throw new Error("Réponse vide de Zetsu");
+
+      conversationHistory[uid].push({ role: 'assistant', content: reply });
+
+      const chunks = chunkMessage(reply, 1900);
+      for (const chunk of chunks) {
+        await sendMessage(senderId, { text: chunk }, pageAccessToken);
       }
-    } catch (error) {
-      console.error('Error calling GPT-4 API:', error);
-      const errorMessage = `${header}Error: Unexpected response format from API.${footer}`;
-      await sendMessage(senderId, { text: errorMessage }, pageAccessToken);
+    } catch (zetsuErr) {
+      console.warn("Api 1 a échoué, tentative avec Gemini...");
+      try {
+        const geminiResponse = await axios.post(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyDIGG4puPZ6kPIUR0CSD6fOgh6PNWqYFuM`,
+          {
+            contents: [
+              {
+                parts: [
+                  {
+                    text: prompt
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        await deleteMessage(typingMessageId, pageAccessToken);
+
+        const geminiReply = geminiResponse.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!geminiReply) throw new Error("Réponse vide de Gemini");
+
+        conversationHistory[uid].push({ role: 'assistant', content: geminiReply });
+
+        const chunks = chunkMessage(geminiReply, 1900);
+        for (const chunk of chunks) {
+          await sendMessage(senderId, { text: chunk }, pageAccessToken);
+        }
+      } catch (geminiErr) {
+        console.error("Erreur Gemini:", geminiErr.message);
+        await deleteMessage(typingMessageId, pageAccessToken);
+        await sendMessage(senderId, { text: "Alerte 🚨" }, pageAccessToken);
+      }
     }
-  }
+  },
 };
