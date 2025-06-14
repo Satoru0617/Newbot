@@ -22,7 +22,7 @@ const conversationHistory = {};
 
 async function sendTypingIndicator(senderId, pageAccessToken) {
   try {
-    const res = await sendMessage(senderId, { text: "✍️ L’IA écrit..." }, pageAccessToken);
+    const res = await sendMessage(senderId, { text: "" }, pageAccessToken);
     return res?.message_id || null;
   } catch (err) {
     console.error("Erreur lors de l'envoi de l'indicateur :", err.message);
